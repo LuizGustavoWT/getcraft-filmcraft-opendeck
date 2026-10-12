@@ -16,6 +16,8 @@ use tokio::{
 };
 
 const DEFAULT_EXECUTABLE: &str = "filmcraft-cli";
+const DEFAULT_DESKTOP_EXECUTABLE: &str = "filmcraft";
+const DEFAULT_CONTROL_PORT: u16 = 9876;
 const CATALOG_ARGUMENTS: &[&str] = &["commands", "--json"];
 const DEFAULT_ARGUMENTS: &str = r#"["commands","--json"]"#;
 const MAX_ARGUMENTS: usize = 128;
@@ -630,6 +632,175 @@ impl Action for FilmCraftEditControl {
     }
 }
 
+/// Opens the FilmCraft desktop app with the same loopback control endpoint used by deck controls.
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(default, rename_all = "camelCase")]
+struct LaunchSettings {
+    executable: String,
+    control_host: String,
+    control_port: u16,
+    working_directory: String,
+    title: String,
+}
+
+impl Default for LaunchSettings {
+    fn default() -> Self {
+        Self {
+            executable: String::new(),
+            control_host: "127.0.0.1".into(),
+            control_port: DEFAULT_CONTROL_PORT,
+            working_directory: String::new(),
+            title: "Open FilmCraft".into(),
+        }
+    }
+}
+
+impl LaunchSettings {
+    fn executable(&self) -> &str {
+        let executable = self.executable.trim();
+        if executable.is_empty() {
+            DEFAULT_DESKTOP_EXECUTABLE
+        } else {
+            executable
+        }
+    }
+
+    fn host(&self) -> &str {
+        let host = self.control_host.trim();
+        if host.is_empty() {
+            "127.0.0.1"
+        } else {
+            host
+        }
+    }
+
+    fn port(&self) -> Result<u16, ExecutionError> {
+        if self.control_port == 0 {
+            Err(ExecutionError::Configuration(
+                "Choose a control port from 1 to 65535.".into(),
+            ))
+        } else {
+            Ok(self.control_port)
+        }
+    }
+
+    fn arguments(&self) -> Result<Vec<String>, ExecutionError> {
+        Ok(vec!["--control".into(), self.port()?.to_string()])
+    }
+}
+
+async fn launch_filmcraft(settings: &LaunchSettings) -> Result<String, ExecutionError> {
+    let host = settings.host();
+    if !loopback_host(host) {
+        return Err(ExecutionError::Configuration(
+            "FilmCraft exposes its control channel only on localhost. Use 127.0.0.1, localhost, or ::1.".into(),
+        ));
+    }
+    let port = settings.port()?;
+    if matches!(
+        tokio::time::timeout(Duration::from_millis(250), TcpStream::connect((host, port))).await,
+        Ok(Ok(_))
+    ) {
+        return Ok(format!("FilmCraft is already ready at {host}:{port}."));
+    }
+    let mut command = Command::new(settings.executable());
+    command
+        .args(settings.arguments()?)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(false);
+    if !settings.working_directory.trim().is_empty() {
+        command.current_dir(PathBuf::from(settings.working_directory.trim()));
+    }
+    command.spawn().map_err(|error| {
+        ExecutionError::Process(format!("Could not open {}: {error}", settings.executable()))
+    })?;
+    Ok(format!("Starting FilmCraft at {host}:{port}."))
+}
+
+async fn report_launch(
+    instance: &Instance,
+    settings: &LaunchSettings,
+    result: Result<String, ExecutionError>,
+    inspector: bool,
+) {
+    match result {
+        Ok(message) => {
+            let _ = instance.set_title(Some(settings.title.clone()), None).await;
+            let _ = instance.show_ok().await;
+            if inspector {
+                let _ = instance
+                    .send_to_property_inspector(
+                        json!({"kind":"launch", "ok":true, "message":message}),
+                    )
+                    .await;
+            }
+        }
+        Err(error) => {
+            let message = error.to_string();
+            log::warn!("FilmCraft launcher failed: {message}");
+            let _ = instance.set_title(Some("Error".to_string()), None).await;
+            let _ = instance.show_alert().await;
+            if inspector {
+                let _ = instance
+                    .send_to_property_inspector(
+                        json!({"kind":"launch", "ok":false, "message":message}),
+                    )
+                    .await;
+            }
+        }
+    }
+}
+
+struct LaunchFilmCraft;
+
+#[async_trait]
+impl Action for LaunchFilmCraft {
+    const UUID: &'static str = "wt.luizgustavo.getcraft.filmcraft.launch";
+    type Settings = LaunchSettings;
+
+    async fn key_down(
+        &self,
+        instance: &Instance,
+        settings: &Self::Settings,
+    ) -> OpenActionResult<()> {
+        report_launch(instance, settings, launch_filmcraft(settings).await, false).await;
+        Ok(())
+    }
+
+    async fn will_appear(
+        &self,
+        instance: &Instance,
+        settings: &Self::Settings,
+    ) -> OpenActionResult<()> {
+        let _ = instance.set_title(Some(settings.title.clone()), None).await;
+        Ok(())
+    }
+
+    async fn send_to_plugin(
+        &self,
+        instance: &Instance,
+        settings: &Self::Settings,
+        payload: &Value,
+    ) -> OpenActionResult<()> {
+        if payload.get("request").and_then(Value::as_str) == Some("launch") {
+            let effective = payload
+                .get("settings")
+                .and_then(|value| serde_json::from_value::<LaunchSettings>(value.clone()).ok())
+                .unwrap_or_else(|| settings.clone());
+            report_launch(
+                instance,
+                &effective,
+                launch_filmcraft(&effective).await,
+                true,
+            )
+            .await;
+        }
+        Ok(())
+    }
+}
+
 struct RunFilmCraftCli;
 
 #[async_trait]
@@ -693,6 +864,7 @@ async fn main() -> OpenActionResult<()> {
         ColorChoice::Never,
     );
     register_action(FilmCraftEditControl).await;
+    register_action(LaunchFilmCraft).await;
     register_action(RunFilmCraftCli).await;
     run(std::env::args().collect()).await
 }
@@ -728,6 +900,15 @@ mod tests {
                 .map(|value| (*value).to_string())
                 .collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn launcher_uses_the_configured_control_port() {
+        let settings = LaunchSettings {
+            control_port: 24567,
+            ..Default::default()
+        };
+        assert_eq!(settings.arguments().unwrap(), ["--control", "24567"]);
     }
 
     #[test]

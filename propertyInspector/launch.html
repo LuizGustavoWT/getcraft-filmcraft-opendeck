@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Open FilmCraft</title>
+  <link rel="stylesheet" href="run.css">
+</head>
+<body>
+  <main>
+    <h1>Open FilmCraft</h1>
+    <p class="hint">Starts the local desktop app with its loopback control service. The launch key and Edit Control use the same host and port.</p>
+    <label>Desktop executable <span class="optional">optional</span><input id="executable" type="text" placeholder="filmcraft"></label>
+    <div class="grid">
+      <label>Control host<input id="controlHost" type="text" value="127.0.0.1"></label>
+      <label>Control port<input id="controlPort" type="number" min="1" max="65535" value="9876"></label>
+    </div>
+    <p class="hint">FilmCraft accepts <code>--control PORT</code> and listens only on this computer.</p>
+    <label>Working directory <span class="optional">optional</span><input id="workingDirectory" type="text" placeholder="/home/me/Videos/project"></label>
+    <label>Key title<input id="title" type="text" value="Open FilmCraft"></label>
+    <div class="buttons"><button id="test" type="button">Open FilmCraft now</button></div>
+    <p id="status" role="status">Place this action on a key, then press it to open FilmCraft.</p>
+  </main>
+  <script>
+    let socket, context; const $ = (id) => document.getElementById(id);
+    const fields = ["executable", "controlHost", "controlPort", "workingDirectory", "title"];
+    function settings() { return { executable: $("executable").value.trim(), controlHost: $("controlHost").value.trim(), controlPort: Number($("controlPort").value) || 9876, workingDirectory: $("workingDirectory").value.trim(), title: $("title").value.trim() || "Open FilmCraft" }; }
+    function persist() { if (socket && context) socket.send(JSON.stringify({event:"setSettings", context, payload:settings()})); }
+    function status(message, error=false) { const el=$("status"); el.textContent=message || "Ready."; el.className=error ? "error" : ""; }
+    function receive(event) { let message; try { message=JSON.parse(event.data); } catch (_) { return; } const payload=message.payload || {}; if (message.event === "sendToPropertyInspector" && payload.kind === "launch") status(payload.message, !payload.ok); }
+    function connectElgatoStreamDeckSocket(port, propertyInspectorUUID, registerEvent, info, actionInfo) {
+      const action=JSON.parse(actionInfo); context=action.context; const saved=(action.payload && action.payload.settings) || {};
+      $("executable").value=saved.executable || ""; $("controlHost").value=saved.controlHost || "127.0.0.1"; $("controlPort").value=saved.controlPort || 9876; $("workingDirectory").value=saved.workingDirectory || ""; $("title").value=saved.title || "Open FilmCraft";
+      fields.forEach((id) => $(id).addEventListener("input", persist));
+      socket=new WebSocket(`ws://localhost:${port}`); socket.onopen=()=>socket.send(JSON.stringify({event:registerEvent,uuid:propertyInspectorUUID})); socket.onmessage=receive;
+      $("test").addEventListener("click",()=>{persist();status("Opening FilmCraft…");if(socket&&context)socket.send(JSON.stringify({event:"sendToPlugin",context,payload:{request:"launch",settings:settings()}}))});
+    }
+  </script>
+</body>
+</html>
