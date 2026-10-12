@@ -8,6 +8,10 @@ Each action stores an executable path and a JSON array of arguments. The plugin 
 
 ## Features
 
+- A dedicated **FilmCraft Edit Control** action for the application window already open on your desktop—not a separate headless CLI session.
+- Key actions for play/pause, add edit (cut), ripple delete, marker navigation, edit-point navigation, shuttle, and undo/redo.
+- Encoder modes for frame-accurate jog, variable shuttle (±1× to ±8×), selected-clip audio gain, and selected Lumetri exposure, contrast, or saturation.
+- Encoder press is independently assignable (Stop is the default), which makes a D200X dial feel like a compact transport control.
 - One configurable **Run FilmCraft CLI** action for keypad keys and encoders.
 - Supports every FilmCraft CLI subcommand, option, and future addition: the action forwards the exact JSON argument array you configure.
 - Loads the installed CLI's dynamic `commands --json` catalog in the Property Inspector and can create an editable `exec` template for any engine command.
@@ -20,6 +24,14 @@ Each action stores an executable path and a JSON array of arguments. The plugin 
 - Linux x86_64
 - OpenDeck with OpenAction-compatible plugin support
 - FilmCraft and `filmcraft-cli` installed and available in `PATH`, or its absolute path entered in the Property Inspector
+
+For **FilmCraft Edit Control**, start the desktop application with its local control port enabled:
+
+```bash
+filmcraft --control 9876
+```
+
+The edit action only accepts `localhost`, `127.0.0.1`, or `::1`; it cannot contact a remote host. Color dials act on the selected clip's existing Lumetri effect, and audio gain acts on selected audio clips. Each turn is an ordinary FilmCraft undoable operation.
 
 ## Install
 
