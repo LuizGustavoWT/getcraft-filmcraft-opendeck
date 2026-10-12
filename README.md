@@ -9,6 +9,7 @@ An independent Linux-only [OpenDeck](https://github.com/nekename/OpenDeck) plugi
 ## Features
 
 - A dedicated **FilmCraft Edit Control** action for the application window already open on your desktop—not a separate headless CLI session.
+- **Open FilmCraft** starts the desktop app with the selected loopback host and control port, so a deck profile can bring up its own live-editing endpoint.
 - Key actions for play/pause, add edit (cut), ripple delete, marker navigation, edit-point navigation, shuttle, and undo/redo.
 - Encoder modes for frame-accurate jog, variable shuttle (±1× to ±8×), selected-clip audio gain, and selected Lumetri exposure, contrast, or saturation.
 - Encoder press is independently assignable (Stop is the default), which makes a D200X dial feel like a compact transport control.
@@ -37,7 +38,7 @@ The edit action only accepts `localhost`, `127.0.0.1`, or `::1`; it cannot conta
 
 1. Download `getcraft-filmcraft-opendeck-linux-x86_64.zip` from the [latest release](../../releases/latest).
 2. In OpenDeck, open **Plugins** → **Install from file** and select the ZIP. Do not extract or rename the `.sdPlugin` directory.
-3. Start FilmCraft with `filmcraft --control 9876`, then drag **FilmCraft Editing Controls → FilmCraft Edit Control** to a key or encoder.
+3. Drag **FilmCraft Editing Controls → Open FilmCraft** to a key, set the desktop executable and control host/port, then press it. Drag **FilmCraft Edit Control** to the editing keys or encoder using the same endpoint.
 4. Select a key action, encoder turn behavior, and press behavior in the Property Inspector. The defaults are play/pause, frame jog, and stop.
 5. Keep **FilmCraft CLI → Run FilmCraft CLI** for an arbitrary CLI operation; enter its path and JSON argument array, then use **Test command**.
 
@@ -116,6 +117,7 @@ A **FilmCraft Edit Control** controla o aplicativo de desktop aberto pelo canal 
 ## Recursos
 
 - Ação dedicada **FilmCraft Edit Control** para o aplicativo FilmCraft que já está aberto — não uma sessão CLI isolada.
+- **Open FilmCraft** abre o aplicativo desktop com o host loopback e a porta de controle escolhidos, prontos para o deck.
 - Ações de tecla para reproduzir/pausar, adicionar corte, ripple delete, navegar entre marcadores e pontos de edição, shuttle, desfazer e refazer.
 - Modos de encoder para jog quadro a quadro, shuttle variável (±1× a ±8×), ganho de áudio do clipe selecionado e exposição, contraste ou saturação do Lumetri do clipe selecionado.
 - Pressão do encoder configurável separadamente (parar é o padrão), deixando um D200X parecido com um controle de transporte compacto.
@@ -140,7 +142,7 @@ A ação aceita somente `localhost`, `127.0.0.1` ou `::1`; não consegue contata
 
 1. Baixe `getcraft-filmcraft-opendeck-linux-x86_64.zip` na [release mais recente](../../releases/latest).
 2. No OpenDeck, abra **Plugins** → **Install from file** e escolha o ZIP. Não extraia nem renomeie a pasta `.sdPlugin`.
-3. Arraste **FilmCraft Editing Controls → FilmCraft Edit Control** para uma tecla ou encoder.
+3. Arraste **FilmCraft Editing Controls → Open FilmCraft** para uma tecla, configure executável, host e porta, depois pressione-a. Use o mesmo endpoint na **FilmCraft Edit Control**.
 4. No Property Inspector, escolha a ação da tecla, o comportamento do giro e o da pressão. Os padrões são reproduzir/pausar, jog por quadro e parar.
 5. Use **FilmCraft CLI → Run FilmCraft CLI** para uma operação CLI arbitrária; configure o caminho e o vetor JSON, depois use **Test command**.
 
