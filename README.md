@@ -1,10 +1,10 @@
-# FilmCraft CLI for OpenDeck
+# FilmCraft Live Controls for OpenDeck
 
 [Português do Brasil](#português-do-brasil) · [Contributing](CONTRIBUTING.md) · [FilmCraft](https://github.com/storytold/filmcraft) · [OpenDeck](https://github.com/nekename/OpenDeck)
 
-An independent Linux-only [OpenDeck](https://github.com/nekename/OpenDeck) plugin for running every available [FilmCraft CLI](https://github.com/storytold/filmcraft) command from a Stream Deck key. It does not bundle FilmCraft: point it at the `filmcraft-cli` installed on your machine.
+An independent Linux-only [OpenDeck](https://github.com/nekename/OpenDeck) plugin that turns Stream Deck keys and rotary encoders into live [FilmCraft](https://github.com/storytold/filmcraft) editing controls. Cut, ripple-delete, navigate markers and edit points, shuttle, jog frame by frame, adjust selected-clip audio gain, and dial Lumetri exposure, contrast, or saturation without leaving the timeline.
 
-Each action stores an executable path and a JSON array of arguments. The plugin launches the executable directly, without `sh -c` or another shell. That makes JSON parameters, spaces in paths, and untrusted filenames safe to pass as arguments.
+**FilmCraft Edit Control** drives the running desktop application over its local control channel. The retained **Run FilmCraft CLI** action is for advanced or version-specific automation: it stores an executable path and JSON argument array, then launches the executable directly without `sh -c` or another shell.
 
 ## Features
 
@@ -37,9 +37,9 @@ The edit action only accepts `localhost`, `127.0.0.1`, or `::1`; it cannot conta
 
 1. Download `getcraft-filmcraft-opendeck-linux-x86_64.zip` from the [latest release](../../releases/latest).
 2. In OpenDeck, open **Plugins** → **Install from file** and select the ZIP. Do not extract or rename the `.sdPlugin` directory.
-3. Drag **FilmCraft CLI → Run FilmCraft CLI** to a key.
-4. Enter the CLI path if `filmcraft-cli` is not in `PATH`, then enter a JSON argument array.
-5. Use **Test command**. A green check means the CLI exited successfully; an alert means that its error summary is available in the Property Inspector and OpenDeck logs.
+3. Start FilmCraft with `filmcraft --control 9876`, then drag **FilmCraft Editing Controls → FilmCraft Edit Control** to a key or encoder.
+4. Select a key action, encoder turn behavior, and press behavior in the Property Inspector. The defaults are play/pause, frame jog, and stop.
+5. Keep **FilmCraft CLI → Run FilmCraft CLI** for an arbitrary CLI operation; enter its path and JSON argument array, then use **Test command**.
 
 ## Configuration and examples
 
@@ -109,12 +109,16 @@ MIT. FilmCraft and OpenDeck are independent upstream projects with their own lic
 
 # Português do Brasil
 
-Plugin independente, somente para Linux, do [OpenDeck](https://github.com/nekename/OpenDeck) para executar todos os comandos disponíveis da [CLI do FilmCraft](https://github.com/storytold/filmcraft) a partir de uma tecla do Stream Deck. O FilmCraft não é incluído no plugin: informe o `filmcraft-cli` instalado na sua máquina.
+Plugin independente, somente para Linux, do [OpenDeck](https://github.com/nekename/OpenDeck) que transforma teclas e encoders rotativos do Stream Deck em controles de edição ao vivo para o [FilmCraft](https://github.com/storytold/filmcraft). Corte, faça ripple delete, navegue por marcadores e pontos de edição, use shuttle, avance quadro a quadro, ajuste o ganho do áudio do clipe selecionado e controle exposição, contraste ou saturação do Lumetri sem sair da timeline.
 
-Cada ação guarda o executável e uma lista JSON de argumentos. O plugin chama o executável diretamente, sem `sh -c` nem outro shell. Assim, JSON, caminhos com espaços e nomes de arquivos não confiáveis são passados com segurança.
+A **FilmCraft Edit Control** controla o aplicativo de desktop aberto pelo canal local de controle. A ação **Run FilmCraft CLI**, mantida para automações avançadas ou específicas de versão, guarda o executável e um vetor JSON de argumentos e o chama diretamente, sem `sh -c` nem outro shell.
 
 ## Recursos
 
+- Ação dedicada **FilmCraft Edit Control** para o aplicativo FilmCraft que já está aberto — não uma sessão CLI isolada.
+- Ações de tecla para reproduzir/pausar, adicionar corte, ripple delete, navegar entre marcadores e pontos de edição, shuttle, desfazer e refazer.
+- Modos de encoder para jog quadro a quadro, shuttle variável (±1× a ±8×), ganho de áudio do clipe selecionado e exposição, contraste ou saturação do Lumetri do clipe selecionado.
+- Pressão do encoder configurável separadamente (parar é o padrão), deixando um D200X parecido com um controle de transporte compacto.
 - Ação configurável **Run FilmCraft CLI** para teclas e encoders.
 - Todos os subcomandos, opções e futuras adições da CLI: a ação repassa exatamente o vetor JSON configurado.
 - Catálogo dinâmico de `commands --json` no Property Inspector, com modelo editável de `exec` para qualquer comando interno.
@@ -126,11 +130,19 @@ Cada ação guarda o executável e uma lista JSON de argumentos. O plugin chama 
 
 Você precisa de Linux x86_64, OpenDeck compatível com OpenAction e FilmCraft com `filmcraft-cli` no `PATH` (ou o caminho absoluto no Property Inspector).
 
+Para usar a **FilmCraft Edit Control**, inicie o aplicativo com a porta local de controle:
+
+```bash
+filmcraft --control 9876
+```
+
+A ação aceita somente `localhost`, `127.0.0.1` ou `::1`; não consegue contatar um host remoto. Os encoders de cor atuam no efeito Lumetri existente do clipe selecionado e o ganho atua nos clipes de áudio selecionados. Cada giro é uma edição comum e desfeita pelo FilmCraft.
+
 1. Baixe `getcraft-filmcraft-opendeck-linux-x86_64.zip` na [release mais recente](../../releases/latest).
 2. No OpenDeck, abra **Plugins** → **Install from file** e escolha o ZIP. Não extraia nem renomeie a pasta `.sdPlugin`.
-3. Arraste **FilmCraft CLI → Run FilmCraft CLI** para uma tecla.
-4. Configure o caminho da CLI, se necessário, e o vetor JSON de argumentos.
-5. Use **Test command**. O check verde indica sucesso; o alerta mostra que houve erro, cujo resumo aparece no inspetor e nos logs do OpenDeck.
+3. Arraste **FilmCraft Editing Controls → FilmCraft Edit Control** para uma tecla ou encoder.
+4. No Property Inspector, escolha a ação da tecla, o comportamento do giro e o da pressão. Os padrões são reproduzir/pausar, jog por quadro e parar.
+5. Use **FilmCraft CLI → Run FilmCraft CLI** para uma operação CLI arbitrária; configure o caminho e o vetor JSON, depois use **Test command**.
 
 ## Configuração
 
