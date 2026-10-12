@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FilmCraft Edit Control</title>
+  <link rel="stylesheet" href="run.css">
+</head>
+<body>
+  <main>
+    <h1>FilmCraft Edit Control</h1>
+    <p class="hint">Connects only to the FilmCraft window running on this computer. Start FilmCraft with <code>--control 9876</code>.</p>
+    <div class="grid">
+      <label>Control host<input id="controlHost" value="127.0.0.1" placeholder="127.0.0.1"></label>
+      <label>Control port<input id="controlPort" type="number" min="1" max="65535" value="9876"></label>
+    </div>
+    <label>Key action
+      <select id="keyAction">
+        <option value="playPause">Play / pause</option><option value="cut">Add edit (cut)</option><option value="rippleDelete">Ripple delete selection</option>
+        <option value="addMarker">Add marker at playhead</option><option value="previousMarker">Previous marker</option><option value="nextMarker">Next marker</option>
+        <option value="previousEdit">Previous edit point</option><option value="nextEdit">Next edit point</option><option value="shuttleForward">Shuttle forward</option>
+        <option value="shuttleReverse">Shuttle reverse</option><option value="shuttleStop">Stop playback</option><option value="undo">Undo</option><option value="redo">Redo</option>
+      </select>
+    </label>
+    <label>Encoder turn
+      <select id="dialAction">
+        <option value="jog">Jog playhead by frames</option><option value="shuttle">Shuttle playback (speed and direction)</option>
+        <option value="audioGain">Selected clip audio gain (dB)</option><option value="exposure">Selected Lumetri exposure</option>
+        <option value="contrast">Selected Lumetri contrast</option><option value="saturation">Selected Lumetri saturation</option>
+      </select>
+    </label>
+    <p class="hint">Color controls change the selected clip's Lumetri effect. Add Lumetri first; every turn is one undoable FilmCraft edit.</p>
+    <div class="grid">
+      <label>Turn step<input id="dialStep" type="number" min="0.01" max="100" step="0.01" value="1"></label>
+      <label>Encoder press
+        <select id="pressAction"><option value="shuttleStop">Stop playback</option><option value="playPause">Play / pause</option><option value="addMarker">Add marker</option><option value="cut">Add edit (cut)</option><option value="undo">Undo</option><option value="redo">Redo</option></select>
+      </label>
+    </div>
+    <label>Key title<input id="title" value="FilmCraft" placeholder="FilmCraft"></label>
+    <div class="buttons"><button id="test" type="button">Test key action</button></div>
+    <p id="status" role="status">Configure a control and place it on a key or encoder.</p>
+  </main>
+  <script>
+    let socket, context;
+    const $ = (id) => document.getElementById(id);
+    const fields = ["controlHost", "controlPort", "keyAction", "pressAction", "dialAction", "dialStep", "title"];
+    function settings() { return { controlHost: $("controlHost").value.trim(), controlPort: Number($("controlPort").value) || 9876, keyAction: $("keyAction").value, pressAction: $("pressAction").value, dialAction: $("dialAction").value, dialStep: Number($("dialStep").value) || 1, title: $("title").value.trim() || "FilmCraft" }; }
+    function persist() { if (socket && context) socket.send(JSON.stringify({event:"setSettings", context, payload:settings()})); }
+    function status(message, error=false) { const el=$("status"); el.textContent=message || "Ready."; el.className=error ? "error" : ""; }
+    function receive(event) { let message; try { message=JSON.parse(event.data); } catch (_) { return; } if (message.event !== "sendToPropertyInspector") return; const p=message.payload || {}; if (p.kind === "result") status(p.message || (p.ok ? "FilmCraft responded." : "Control failed."), !p.ok); }
+    function connectElgatoStreamDeckSocket(port, propertyInspectorUUID, registerEvent, info, actionInfo) {
+      const action=JSON.parse(actionInfo); context=action.context; const saved=(action.payload && action.payload.settings) || {};
+      fields.forEach((id) => { const key=id[0].toLowerCase()+id.slice(1); if (saved[key] !== undefined) $(id).value=saved[key]; $(id).addEventListener(id.endsWith("Action") ? "change" : "input", persist); });
+      socket=new WebSocket(`ws://localhost:${port}`); socket.onopen=()=>socket.send(JSON.stringify({event:registerEvent,uuid:propertyInspectorUUID})); socket.onmessage=receive;
+      $("test").addEventListener("click",()=>{ persist(); status("Contacting FilmCraft…"); socket && context && socket.send(JSON.stringify({event:"sendToPlugin",context,payload:{request:"test",settings:settings()}})); });
+    }
+  </script>
+</body>
+</html>

@@ -9,7 +9,11 @@ use openaction::*;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use simplelog::{ColorChoice, Config, LevelFilter, TermLogger, TerminalMode};
-use tokio::process::Command;
+use tokio::{
+    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+    net::TcpStream,
+    process::Command,
+};
 
 const DEFAULT_EXECUTABLE: &str = "filmcraft-cli";
 const CATALOG_ARGUMENTS: &[&str] = &["commands", "--json"];
@@ -298,6 +302,334 @@ async fn send_catalog(instance: &Instance, settings: &CommandSettings) {
     let _ = instance.send_to_property_inspector(reply).await;
 }
 
+/// Settings for a control that drives the FilmCraft window already running on this machine.
+/// The control server is deliberately loopback-only, so an OpenDeck profile can never turn this
+/// plugin into a network command runner.
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(default, rename_all = "camelCase")]
+struct EditControlSettings {
+    control_host: String,
+    control_port: u16,
+    key_action: String,
+    press_action: String,
+    dial_action: String,
+    dial_step: f64,
+    title: String,
+}
+
+impl Default for EditControlSettings {
+    fn default() -> Self {
+        Self {
+            control_host: "127.0.0.1".into(),
+            control_port: 9876,
+            key_action: "playPause".into(),
+            press_action: "shuttleStop".into(),
+            dial_action: "jog".into(),
+            dial_step: 1.0,
+            title: "FilmCraft".into(),
+        }
+    }
+}
+
+impl EditControlSettings {
+    fn host(&self) -> &str {
+        let host = self.control_host.trim();
+        if host.is_empty() {
+            "127.0.0.1"
+        } else {
+            host
+        }
+    }
+
+    fn step(&self) -> f64 {
+        if self.dial_step.is_finite() {
+            self.dial_step.abs().clamp(0.01, 100.0)
+        } else {
+            1.0
+        }
+    }
+}
+
+fn loopback_host(host: &str) -> bool {
+    matches!(
+        host.to_ascii_lowercase().as_str(),
+        "127.0.0.1" | "::1" | "localhost"
+    )
+}
+
+async fn film_control_call(
+    settings: &EditControlSettings,
+    method: &str,
+    params: Value,
+) -> Result<Value, String> {
+    let host = settings.host();
+    if !loopback_host(host) {
+        return Err("The FilmCraft control host must be localhost, 127.0.0.1, or ::1.".into());
+    }
+    if settings.control_port == 0 {
+        return Err("Set a valid FilmCraft control port (normally 9876).".into());
+    }
+    let stream = tokio::time::timeout(
+        Duration::from_secs(3),
+        TcpStream::connect((host, settings.control_port)),
+    )
+    .await
+    .map_err(|_| "Timed out connecting to FilmCraft. Start it with --control 9876.".to_string())?
+    .map_err(|error| format!("Could not connect to FilmCraft control: {error}"))?;
+    let (reader, mut writer) = stream.into_split();
+    let request = json!({"id": 1, "method": method, "params": params});
+    writer
+        .write_all(request.to_string().as_bytes())
+        .await
+        .map_err(|error| format!("Could not send FilmCraft control request: {error}"))?;
+    writer
+        .write_all(b"\n")
+        .await
+        .map_err(|error| format!("Could not finish FilmCraft control request: {error}"))?;
+    let mut line = String::new();
+    let read = tokio::time::timeout(
+        Duration::from_secs(5),
+        BufReader::new(reader).read_line(&mut line),
+    )
+    .await
+    .map_err(|_| "FilmCraft did not answer the control request in time.".to_string())?
+    .map_err(|error| format!("Could not read FilmCraft control response: {error}"))?;
+    if read == 0 || line.len() > 128 * 1024 {
+        return Err("FilmCraft returned an empty or oversized control response.".into());
+    }
+    let response: Value = serde_json::from_str(&line)
+        .map_err(|error| format!("FilmCraft returned invalid control JSON: {error}"))?;
+    if response.get("ok").and_then(Value::as_bool) == Some(true) {
+        Ok(response.get("result").cloned().unwrap_or(Value::Null))
+    } else {
+        Err(response
+            .get("error")
+            .and_then(Value::as_str)
+            .unwrap_or("FilmCraft rejected the control request.")
+            .to_string())
+    }
+}
+
+fn engine(command: &'static str, params: Value) -> (&'static str, Value) {
+    (
+        "engine.execute",
+        json!({"command": command, "params": params}),
+    )
+}
+
+fn film_key_request(action: &str) -> Result<(&'static str, Value), String> {
+    Ok(match action {
+        "playPause" => ("ui.playback", json!({"action":"toggle"})),
+        "cut" => engine("sequence.addEdit", json!({})),
+        "rippleDelete" => engine("edit.rippleDelete", json!({})),
+        "addMarker" => engine("markers.add", json!({})),
+        "previousMarker" => engine("markers.goPrev", json!({})),
+        "nextMarker" => engine("markers.goNext", json!({})),
+        "previousEdit" => engine("playhead.prevEdit", json!({})),
+        "nextEdit" => engine("playhead.nextEdit", json!({})),
+        "shuttleForward" => (
+            "ui.menu.invoke",
+            json!({"id":"playback.forward", "params":{}}),
+        ),
+        "shuttleReverse" => (
+            "ui.menu.invoke",
+            json!({"id":"playback.reverse", "params":{}}),
+        ),
+        "shuttleStop" => ("ui.playback", json!({"action":"stop"})),
+        "undo" => engine("edit.undo", json!({})),
+        "redo" => engine("edit.redo", json!({})),
+        other => return Err(format!("Unknown FilmCraft key action `{other}`.")),
+    })
+}
+
+fn selected_lumetri_value(sequence: &Value, parameter: &str) -> Option<(u64, usize, f64)> {
+    let selected = sequence.get("selection")?.as_array()?.first()?.as_u64()?;
+    for track_type in ["video", "audio"] {
+        for track in sequence.get(track_type)?.as_array()? {
+            for item in track.get("items")?.as_array()? {
+                if item.get("clip").and_then(Value::as_u64) != Some(selected) {
+                    continue;
+                }
+                for (index, effect) in item.get("effects")?.as_array()?.iter().enumerate() {
+                    if effect.get("effect").and_then(Value::as_str) != Some("lumetri") {
+                        continue;
+                    }
+                    let value = effect
+                        .get("params")?
+                        .get(parameter)?
+                        .get("value")?
+                        .as_str()?;
+                    let number = value
+                        .strip_prefix("Float(")?
+                        .strip_suffix(')')?
+                        .parse::<f64>()
+                        .ok()?;
+                    return Some((selected, index, number));
+                }
+            }
+        }
+    }
+    None
+}
+
+async fn film_dial_request(settings: &EditControlSettings, ticks: i16) -> Result<Value, String> {
+    if ticks == 0 {
+        return Ok(Value::Null);
+    }
+    let scaled = f64::from(ticks) * settings.step();
+    match settings.dial_action.as_str() {
+        "jog" => {
+            let (method, params) =
+                engine("playhead.step", json!({"frames": scaled.round() as i64}));
+            film_control_call(settings, method, params).await
+        }
+        "shuttle" => {
+            let speed = scaled.signum() * scaled.abs().ceil().clamp(1.0, 8.0);
+            film_control_call(
+                settings,
+                "ui.playback",
+                json!({"action":"play", "speed":speed}),
+            )
+            .await
+        }
+        "audioGain" => {
+            film_control_call(
+                settings,
+                "engine.execute",
+                json!({"command":"clip.audioGain", "params":{"mode":"adjust", "db":scaled}}),
+            )
+            .await
+        }
+        "exposure" | "contrast" | "saturation" => {
+            let sequence = film_control_call(
+                settings,
+                "engine.execute",
+                json!({"command":"sequence.inspect", "params":{}}),
+            )
+            .await?;
+            let (clip, effect, current) =
+                selected_lumetri_value(&sequence, settings.dial_action.as_str()).ok_or_else(
+                    || {
+                        format!(
+                    "Select a clip with a Lumetri {} parameter before turning this encoder.",
+                    settings.dial_action
+                )
+                    },
+                )?;
+            film_control_call(settings, "engine.execute", json!({"command":"effects.setParam", "params":{"clip":clip, "effect":effect, "param":settings.dial_action, "value":current + scaled, "merge":"opendeck-dial"}})).await
+        }
+        other => Err(format!("Unknown FilmCraft dial action `{other}`.")),
+    }
+}
+
+async fn report_edit_result(
+    instance: &Instance,
+    title: &str,
+    result: Result<Value, String>,
+    inspector: bool,
+) {
+    match result {
+        Ok(value) => {
+            let _ = instance.set_title(Some(title.to_string()), None).await;
+            let _ = instance.show_ok().await;
+            if inspector {
+                let _ = instance.send_to_property_inspector(json!({"kind":"result", "ok":true, "message":summary(value.to_string().as_bytes(), b"")})).await;
+            }
+        }
+        Err(message) => {
+            log::warn!("FilmCraft edit control failed: {message}");
+            let _ = instance.set_title(Some("Error".to_string()), None).await;
+            let _ = instance.show_alert().await;
+            if inspector {
+                let _ = instance
+                    .send_to_property_inspector(
+                        json!({"kind":"result", "ok":false, "message":message}),
+                    )
+                    .await;
+            }
+        }
+    }
+}
+
+struct FilmCraftEditControl;
+
+#[async_trait]
+impl Action for FilmCraftEditControl {
+    const UUID: &'static str = "wt.luizgustavo.getcraft.filmcraft.editControl";
+    type Settings = EditControlSettings;
+
+    async fn key_down(
+        &self,
+        instance: &Instance,
+        settings: &Self::Settings,
+    ) -> OpenActionResult<()> {
+        let result = film_key_request(&settings.key_action)
+            .and_then(|(method, params)| Ok((method, params)));
+        let result = match result {
+            Ok((method, params)) => film_control_call(settings, method, params).await,
+            Err(error) => Err(error),
+        };
+        report_edit_result(instance, &settings.title, result, false).await;
+        Ok(())
+    }
+
+    async fn dial_down(
+        &self,
+        instance: &Instance,
+        settings: &Self::Settings,
+    ) -> OpenActionResult<()> {
+        let result = match film_key_request(&settings.press_action) {
+            Ok((method, params)) => film_control_call(settings, method, params).await,
+            Err(error) => Err(error),
+        };
+        report_edit_result(instance, &settings.title, result, false).await;
+        Ok(())
+    }
+
+    async fn dial_rotate(
+        &self,
+        instance: &Instance,
+        settings: &Self::Settings,
+        ticks: i16,
+        _pressed: bool,
+    ) -> OpenActionResult<()> {
+        let result = film_dial_request(settings, ticks).await;
+        report_edit_result(instance, &settings.title, result, false).await;
+        Ok(())
+    }
+
+    async fn will_appear(
+        &self,
+        instance: &Instance,
+        settings: &Self::Settings,
+    ) -> OpenActionResult<()> {
+        let _ = instance.set_title(Some(settings.title.clone()), None).await;
+        Ok(())
+    }
+
+    async fn send_to_plugin(
+        &self,
+        instance: &Instance,
+        settings: &Self::Settings,
+        payload: &Value,
+    ) -> OpenActionResult<()> {
+        let effective = payload
+            .get("settings")
+            .and_then(|value| serde_json::from_value::<EditControlSettings>(value.clone()).ok())
+            .unwrap_or_else(|| settings.clone());
+        if payload.get("request").and_then(Value::as_str) == Some("test") {
+            let result = film_key_request(&effective.key_action)
+                .and_then(|(method, params)| Ok((method, params)));
+            let result = match result {
+                Ok((method, params)) => film_control_call(&effective, method, params).await,
+                Err(error) => Err(error),
+            };
+            report_edit_result(instance, &effective.title, result, true).await;
+        }
+        Ok(())
+    }
+}
+
 struct RunFilmCraftCli;
 
 #[async_trait]
@@ -360,6 +692,7 @@ async fn main() -> OpenActionResult<()> {
         TerminalMode::Stdout,
         ColorChoice::Never,
     );
+    register_action(FilmCraftEditControl).await;
     register_action(RunFilmCraftCli).await;
     run(std::env::args().collect()).await
 }
